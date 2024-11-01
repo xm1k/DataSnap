@@ -1,10 +1,16 @@
-api_key = 'To work you need API_KEY from Custom Search API'
+from sympy.physics.units import current
 
+api_key_list = ['To work you need API_KEY from !Custom Search API! You can use more than one key']
+from config import api_key_list # Comment this if you don't need to store the keys in another file
+current_api_key = 0
+api_key = api_key_list[current_api_key]
 import os
 import requests
+import time
+import random
+
 from PIL import Image
 from io import BytesIO
-from config import api_key
 from tqdm import tqdm
 
 cse_id = '431e5b8b2faec4801'
@@ -14,29 +20,75 @@ target_size = (256,256)
 target_format = 'JPEG'
 crop_threshold = 0.5 # Acceptable image crop percentage
 imgs_count = 0
-
 skip_delay = 10 # Load wait time
+
+exceptions = [ # These headers will be strictly excluded from requests
+    "youtube",
+    "video",
+    "thumbnail",
+    "cdn",
+    "instagram"
+]
+
+prompts = [ # These headers will be included in the request, too much is not recommended
+    "cat",
+    "high-resolution"
+]
 
 user_agent = {
     'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36'
 }
 
-def get_img_links(prompt, links_count, api_key, cse_id, start):
-    url = f"https://www.googleapis.com/customsearch/v1"
+def create_prompts(base_prompt):
+    exclusions = " ".join([f"-{word}" for word in exceptions])
+    additions = " ".join(prompts)
+    return f"{base_prompt} {additions} {exclusions}".strip()
+
+
+def get_img_links(prompt, links_count, start):
+    global current_api_key
+    prompt = create_prompts(prompt)
+    url = "https://www.googleapis.com/customsearch/v1"
+
     params = {
         'q': prompt,
         'cx': cse_id,
         'searchType': 'image',
-        'key': api_key,
+        'key': api_key_list[current_api_key],
         'num': links_count,
         'start': start
     }
-    response  = requests.get(url, params=params)
-    data = response.json()
-    if 'items' in data:
-        return [item['link'] for item in data['items']]
-    else:
-        return []
+    while True:
+        try:
+            response = requests.get(url, params=params, headers=user_agent, timeout=skip_delay)
+            response.raise_for_status()
+            data = response.json()
+            if 'items' in data:
+                return [item['link'] for item in data['items']]
+            else:
+                return []
+        except requests.exceptions.HTTPError as e:
+            print(f"Error with API key {current_api_key}: {e}")
+            if e.response.status_code == 400:
+                if start > 200: # For some reason, when start > 200 it gives an error
+                    start = random.randint(1, 190)
+            elif e.response.status_code == 429:
+                current_api_key += 1
+                if current_api_key < len(api_key_list):
+                    print(f"Switching to API key {current_api_key}")
+                    params['key'] = api_key_list[current_api_key]
+                else:
+                    print("All API keys have been exhausted")
+                    return []
+            else:
+                current_api_key += 1
+                if current_api_key < len(api_key_list):
+                    print(f"Switching to API key {current_api_key}")
+                    params['key'] = api_key_list[current_api_key]
+                else:
+                    print("All API keys have been exhausted")
+                    return []
+
 
 def check_img(size):
     if(size[0] < target_size[0] or size[1] < target_size[1]):
@@ -82,7 +134,8 @@ def processing_img(img, target_size):
 def download_images(urls, output_folder):
     errors = 0
     skipped = 0
-    imgs_count = 0
+    imgs_count = len(os.listdir(output_folder)) - 1
+    n = 0
     with tqdm(total = len(urls), desc="downloading images") as pbar:
         for url in urls:
             try:
@@ -94,12 +147,14 @@ def download_images(urls, output_folder):
                     output_path = os.path.join(output_folder, f'image_{imgs_count}.{target_format.lower()}')
                     img.convert("RGB").save(output_path, target_format)
                     imgs_count+=1
+                    n+=1
                 else:
                     skipped+=1
             except Exception as e:
                 # print(e)
                 errors+=1
             pbar.update(1)
+    return n
     if(errors):
         print(f"Errors occured: {errors}")
     if(skipped):
@@ -110,23 +165,41 @@ def save_links_to_file(links, output_folder):
         for link in links:
             f.write(f"{link}\n")
 
-prompt = input("Enter your search term: ")
-num_links = int(input("Enter the required quantity: "))
-output_folder = "images/" + (input("Enter the name of the download folder: "))
+def load_existing_links(file_path):
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
+            return [line.strip() for line in f.readlines()]
+    return []
 
-os.makedirs(output_folder, exist_ok=True)
+def load_config(file_path):
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+    num_links = int(lines[0].strip())
+    config = [line.strip().split(';') for line in lines[1:]]
+    return num_links, config
 
-image_links = []
-start = 1
+num_links, config = load_config('config.txt')
 
-while(num_links>0):
-    if(num_links>=10):
-        image_links += get_img_links(prompt, 10, api_key, cse_id, start)
-        start+=10
-        num_links-=10
-    else:
-        image_links += get_img_links(prompt, num_links, api_key, cse_id, start)
-        num_links = 0
+for request,output_folder in config:
+    output_folder = os.path.join("images", output_folder)
+    os.makedirs(output_folder, exist_ok=True)
 
-save_links_to_file(image_links, output_folder)
-download_images(image_links, output_folder)
+    existing_links_file = os.path.join(output_folder, 'image_links.txt')
+    existing_links = load_existing_links(existing_links_file)
+    images_in_folder = len(os.listdir(output_folder)) - 1
+
+    image_links = []
+
+    remaining_links = num_links - images_in_folder
+    start = len(existing_links) + 1
+    while remaining_links > 0:
+        image_links += get_img_links(request, 10, start)
+        start += 10
+        save_links_to_file(existing_links + image_links, output_folder)
+        remaining_links -= download_images(image_links, output_folder)
+        existing_links = existing_links + image_links
+        image_links = []
+        print(len(os.listdir(output_folder)) - 1)
+    print(f"{request} --- start = {start}")
+
+print("--- DONE ---")

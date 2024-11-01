@@ -1,0 +1,16 @@
+100
+Siamese Cat;siamese
+Maine Coon Cat;maine_coon
+British Shorthair cat;british_short_hair
+Persian Cat;persian
+Russian Blue Cat;rus_blue
+Scottish Fold Cat -straight;scottish_fold
+Sphynx Cat;sphynx
+Abyssinian Cat;abyssinian
+Bengal Cat;bengal
+Norwegian Forest Cat;norwegian_forest
+Savannah Cat;savannah
+Japanese Bobtail Cat;japanese_bobtail
+Ragdoll Cat;ragdoll
+Chartreux Cat;chartreux
+Scottish Straight Cat -fold;scottish_straight
